@@ -151,7 +151,11 @@ class RecordActivity : AppCompatActivity() {
 
         recognizer.process(image)
             .addOnSuccessListener { ocrText ->
-                val cleaned = ocrText.text.replace("\\s".toRegex(), "")
+                val cleaned = ocrText.text
+                    .replace("\\s".toRegex(), "")          // hapus spasi & tab
+                    .replace("[^A-Za-z0-9]".toRegex(), "") // hapus karakter non huruf/angka
+                    .uppercase()                           // ubah ke kapital semua
+
                 edtNoChasisScan.setText(cleaned)
                 updateBadge()
 
