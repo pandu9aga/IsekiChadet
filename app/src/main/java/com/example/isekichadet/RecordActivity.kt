@@ -22,6 +22,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
@@ -158,14 +159,6 @@ class RecordActivity : AppCompatActivity() {
 
                 edtNoChasisScan.setText(cleaned)
                 updateBadge()
-
-                currentPhotoPath?.let { path ->
-                    val file = File(path)
-                    if (file.exists()) {
-                        file.delete()
-                    }
-                    currentPhotoPath = null
-                }
             }
             .addOnFailureListener { e ->
                 Toast.makeText(this, "OCR failed: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -198,25 +191,42 @@ class RecordActivity : AppCompatActivity() {
         val noScan = edtNoChasisScan.text.toString().trim()
         val status = if (noKanban == noScan) "OK" else "NG"
 
-        val json = JSONObject()
-        json.put("No_Produksi", noProduksi)
-        json.put("No_Chasis_Kanban", noKanban)
-        json.put("No_Chasis_Scan", noScan)
-        json.put("Status_Record", status)
+        val requestBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("No_Produksi", noProduksi)
+            .addFormDataPart("No_Chasis_Kanban", noKanban)
+            .addFormDataPart("No_Chasis_Scan", noScan)
+            .addFormDataPart("Status_Record", status)
 
-        //val body = RequestBody.create(MediaType.parse("application/json; charset=utf-8"), json.toString())
-        val mediaType = "application/json; charset=utf-8".toMediaType()
-        val body = json.toString().toRequestBody(mediaType)
+        if (status == "NG" && currentPhotoPath != null) {
+            val file = File(currentPhotoPath!!)
+            if (file.exists()) {
+                val mediaType = "image/jpeg".toMediaType()
+                requestBuilder.addFormDataPart(
+                    "Photo_Ng_Path",
+                    file.name,
+                    file.asRequestBody(mediaType)
+                )
+            }
+        }
+
+        val requestBody = requestBuilder.build()
+
         val request = Request.Builder()
             .url("http://192.168.173.207/iseki_chadet/public/api/records/store")
-            .post(body)
-            .addHeader("Accept", "application/json")
+            .post(requestBody)
             .build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 runOnUiThread {
                     Toast.makeText(applicationContext, "Submit failed: ${e.message}", Toast.LENGTH_SHORT).show()
+
+                    // ✅ hapus file setelah sukses submit
+                    currentPhotoPath?.let { path ->
+                        val file = File(path)
+                        if (file.exists()) file.delete()
+                        currentPhotoPath = null
+                    }
                 }
             }
 
@@ -225,15 +235,48 @@ class RecordActivity : AppCompatActivity() {
                     if (response.isSuccessful) {
                         Toast.makeText(applicationContext, "Data submitted", Toast.LENGTH_SHORT).show()
 
+                        // ✅ hapus file setelah sukses submit
+                        currentPhotoPath?.let { path ->
+                            val file = File(path)
+                            if (file.exists()) file.delete()
+                            currentPhotoPath = null
+                        }
+
                         val intent = Intent(this@RecordActivity, MainActivity::class.java)
                         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
                         startActivity(intent)
                         finish()
                     } else {
                         Toast.makeText(applicationContext, "Error: ${response.code}", Toast.LENGTH_SHORT).show()
+
+                        // ✅ hapus file setelah sukses submit
+                        currentPhotoPath?.let { path ->
+                            val file = File(path)
+                            if (file.exists()) file.delete()
+                            currentPhotoPath = null
+                        }
                     }
                 }
             }
         })
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        cleanupPhoto()
+    }
+
+    override fun onBackPressed() {
+        super.onBackPressed()
+        cleanupPhoto()
+    }
+
+    private fun cleanupPhoto() {
+        currentPhotoPath?.let { path ->
+            val file = File(path)
+            if (file.exists()) file.delete()
+            currentPhotoPath = null
+        }
+    }
+
 }

@@ -26,14 +26,19 @@ class RecordAdapter(private val list: List<Record>) :
     override fun onBindViewHolder(holder: RecordViewHolder, position: Int) {
         val record = list[position]
         holder.tvProduksi.text = record.No_Produksi
-        holder.tvKanban.text = record.No_Chasis_Kanban
-        holder.tvScan.text = record.No_Chasis_Scan
+        holder.tvKanban.text = if (record.No_Chasis_Kanban.isNullOrBlank() || record.No_Chasis_Kanban == "null") "" else record.No_Chasis_Kanban
+        holder.tvScan.text = if (record.No_Chasis_Scan.isNullOrBlank() || record.No_Chasis_Scan == "null") "" else record.No_Chasis_Scan
         holder.tvTime.text = record.Time
         holder.tvStatus.text = record.Status_Record
 
         when {
             record.Status_Record.equals("OK", ignoreCase = true) -> {
                 holder.tvStatus.setBackgroundResource(R.drawable.bg_badge_ok)
+            }
+            record.Status_Record.equals("NG-Approved", ignoreCase = true) -> {
+                holder.tvStatus.setBackgroundResource(R.drawable.bg_badge_approved)
+//                holder.tvStatus.setTextSize(12F)
+                holder.tvStatus.text = "NG-OK"
             }
             record.Status_Record.equals("NG", ignoreCase = true) -> {
                 holder.tvStatus.setBackgroundResource(R.drawable.bg_badge_ng)
