@@ -156,6 +156,7 @@ class RecordActivity : AppCompatActivity() {
                     .replace("\\s".toRegex(), "")          // hapus spasi & tab
                     .replace("[^A-Za-z0-9]".toRegex(), "") // hapus karakter non huruf/angka
                     .uppercase()                           // ubah ke kapital semua
+                    .replace("O", "0")                     // ubah huruf O jadi angka 0
 
                 edtNoChasisScan.setText(cleaned)
                 updateBadge()
