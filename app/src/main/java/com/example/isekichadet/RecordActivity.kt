@@ -146,6 +146,24 @@ class RecordActivity : AppCompatActivity() {
         }
     }
 
+    private fun levenshtein(a: String, b: String): Int {
+        val dp = Array(a.length + 1) { IntArray(b.length + 1) }
+        for (i in 0..a.length) dp[i][0] = i
+        for (j in 0..b.length) dp[0][j] = j
+
+        for (i in 1..a.length) {
+            for (j in 1..b.length) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                dp[i][j] = minOf(
+                    dp[i - 1][j] + 1,       // delete
+                    dp[i][j - 1] + 1,       // insert
+                    dp[i - 1][j - 1] + cost // substitute
+                )
+            }
+        }
+        return dp[a.length][b.length]
+    }
+
     private fun recognizeText(bitmap: android.graphics.Bitmap) {
         val image = InputImage.fromBitmap(bitmap, 0)
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -158,7 +176,97 @@ class RecordActivity : AppCompatActivity() {
                     .uppercase()                           // ubah ke kapital semua
                     .replace("O", "0")                     // ubah huruf O jadi angka 0
 
-                edtNoChasisScan.setText(cleaned)
+                val kanban = edtNoChasisKanban.text.toString().trim().uppercase()
+                var finalScan = cleaned
+
+                // === CASE 1: ISKI4550 / ISKI0024 ===
+                if (kanban.startsWith("ISKI4550") || kanban.startsWith("ISKI0024")) {
+                    if (cleaned.isNotEmpty() && kanban.length >= 17) {
+                        val prefix13 = kanban.substring(0, 13)
+                        val last4 = if (cleaned.length >= 4) {
+                            cleaned.takeLast(4)
+                        } else {
+                            cleaned.padStart(4, '0')
+                        }
+                        finalScan = prefix13 + last4
+                    }
+                }
+
+                // === CASE 2: Prefix MF1E / MF2E / GC ===
+                else if (
+                    kanban.startsWith("MF1E") ||
+                    kanban.startsWith("MF2E") ||
+                    kanban.startsWith("GC")
+                ) {
+                    if (cleaned.isNotEmpty()) {
+                        val builder = StringBuilder(cleaned)
+
+                        // MF1E / MF2E → bandingkan 4 digit pertama
+                        if (kanban.startsWith("MF1E") || kanban.startsWith("MF2E")) {
+                            val prefix = kanban.take(4)
+                            val scanPrefix = cleaned.take(4)
+
+                            val dist = levenshtein(scanPrefix, prefix)
+                            val similarity = 1.0 - (dist.toDouble() / prefix.length.toDouble())
+
+                            if (similarity >= 0.5 || scanPrefix.length < 4) {
+                                // force replace prefix
+                                if (builder.length < 4) {
+                                    builder.insert(0, prefix.substring(builder.length))
+                                }
+                                for (i in 0 until prefix.length) {
+                                    if (i < builder.length) {
+                                        builder.setCharAt(i, prefix[i])
+                                    } else {
+                                        builder.append(prefix[i])
+                                    }
+                                }
+                            }
+                        }
+
+                        // GC → bandingkan 1 digit pertama
+                        if (kanban.startsWith("GC")) {
+                            val prefix = "GC"
+
+                            // Normalisasi dulu cleaned ke uppercase
+                            val cleanedUpper = cleaned.uppercase()
+
+                            // Cek khusus kalau hanya kebaca sebagian (g-/ -c/ g?/ ?c)
+                            if (cleanedUpper.length >= 1) {
+                                val first = cleanedUpper.getOrNull(0)
+                                val second = cleanedUpper.getOrNull(1)
+
+                                val matchPartialGC =
+                                    (first == 'G' && (second == null || second == '-' || second == '?' || second == 'C')) ||
+                                            (second == 'C' && (first == null || first == '-' || first == '?' || first == 'G'))
+
+                                if (matchPartialGC) {
+                                    if (builder.length < 2) builder.setLength(2) // pastikan panjang minimal 2
+                                    builder.setCharAt(0, 'G')
+                                    builder.setCharAt(1, 'C')
+                                }
+                            }
+
+                            // kalau masih salah → paksa juga jadi GC
+                            if (builder.length < 2 || builder[0] != 'G' || builder[1] != 'C') {
+                                if (builder.length < 2) {
+                                    builder.insert(0, prefix.substring(builder.length))
+                                }
+                                for (i in 0 until prefix.length) {
+                                    if (i < builder.length) {
+                                        builder.setCharAt(i, prefix[i])
+                                    } else {
+                                        builder.append(prefix[i])
+                                    }
+                                }
+                            }
+                        }
+
+                        finalScan = builder.toString()
+                    }
+                }
+
+                edtNoChasisScan.setText(finalScan)
                 updateBadge()
             }
             .addOnFailureListener { e ->
