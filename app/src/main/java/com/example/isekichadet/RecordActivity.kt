@@ -164,12 +164,57 @@ class RecordActivity : AppCompatActivity() {
         return dp[a.length][b.length]
     }
 
+    private fun normalizeScanBasedOnKanban(scan: String, kanban: String): String {
+        if (scan.isEmpty() || kanban.isEmpty()) {
+            return scan
+        }
+
+        // Ambil panjang minimum untuk perbandingan
+        val minLength = minOf(scan.length, kanban.length)
+        val normalizedBuilder = StringBuilder()
+
+        for (i in 0 until minLength) {
+            val scanChar = scan[i]
+            val kanbanChar = kanban[i].uppercaseChar() // Bandingkan dalam bentuk kapital
+
+            // Pasangan karakter yang sering tertukar
+            val isPotentialMisread = when (kanbanChar) {
+                '1' -> scanChar.uppercaseChar() in "I1"
+                'I' -> scanChar.uppercaseChar() in "I1"
+                '5' -> scanChar.uppercaseChar() in "S53"
+                'S' -> scanChar.uppercaseChar() in "S5"
+                '3' -> scanChar.uppercaseChar() in "E3F5"
+                'E' -> scanChar.uppercaseChar() in "E3F"
+                'F' -> scanChar.uppercaseChar() in "E3F"
+                '4' -> scanChar.uppercaseChar() in "A4"
+                'A' -> scanChar.uppercaseChar() in "A4"
+                else -> false
+            }
+
+            if (isPotentialMisread) {
+                // Jika karakter scan adalah pasangan yang tertukar, gunakan karakter dari kanban
+                normalizedBuilder.append(kanbanChar)
+            } else {
+                // Jika tidak, gunakan karakter scan asli (sudah di upper case)
+                normalizedBuilder.append(scanChar.uppercaseChar())
+            }
+        }
+
+        // Tambahkan sisa karakter dari scan jika lebih panjang dari kanban
+        if (scan.length > kanban.length) {
+            normalizedBuilder.append(scan.substring(kanban.length).uppercase())
+        }
+
+        return normalizedBuilder.toString()
+    }
+
     private fun recognizeText(bitmap: android.graphics.Bitmap) {
         val image = InputImage.fromBitmap(bitmap, 0)
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
         recognizer.process(image)
             .addOnSuccessListener { ocrText ->
+                // 1. Lakukan pembersihan dasar
                 val cleaned = ocrText.text
                     .replace("\\s".toRegex(), "")          // hapus spasi & tab
                     .replace("[^A-Za-z0-9]".toRegex(), "") // hapus karakter non huruf/angka
@@ -177,18 +222,51 @@ class RecordActivity : AppCompatActivity() {
                     .replace("O", "0")                     // ubah huruf O jadi angka 0
 
                 val kanban = edtNoChasisKanban.text.toString().trim().uppercase()
-                var finalScan = cleaned
+                // 2. Normalisasi hasil scan berdasarkan referensi kanban
+                var finalScan = normalizeScanBasedOnKanban(cleaned, kanban)
 
-                // === CASE 1: ISKI4550 / ISKI0024 ===
-                if (kanban.startsWith("ISKI4550") || kanban.startsWith("ISKI0024")) {
-                    if (cleaned.isNotEmpty() && kanban.length >= 17) {
-                        val prefix13 = kanban.substring(0, 13)
-                        val last4 = if (cleaned.length >= 4) {
-                            cleaned.takeLast(4)
-                        } else {
-                            cleaned.padStart(4, '0')
+                // 3. Lanjutkan dengan logika CASE 1 dan CASE 2 yang sudah ada
+                // Perhatikan bahwa 'cleaned' diganti dengan 'finalScan' atau 'cleaned' yang sudah dinormalisasi
+                // dalam logika CASE 2, terutama untuk take(4) dan takeLast(4) dll.
+
+                // === CASE 1: ISKI4550 / ISKI0024 / ISKI3410 / ISKM2E56 (Tentukan berdasarkan kemiripan) ===
+                if (kanban.startsWith("ISKI4550") || // Tetap gunakan ini untuk men-trigger CASE 1 secara umum
+                    kanban.startsWith("ISKI0024") ||
+                    kanban.startsWith("ISKI3410") ||
+                    kanban.startsWith("ISKM2E56")
+                ) {
+                    if (finalScan.isNotEmpty()) { // Cek jika scan tidak kosong
+                        // Daftar prefix yang valid untuk CASE 1
+                        val validPrefixes = listOf("ISKI4550", "ISKI0024", "ISKI3410", "ISKM2E56")
+
+                        // Hitung jarak Levenshtein antara awal dari finalScan dan setiap valid prefix
+                        val distances = validPrefixes.map { prefix ->
+                            val scanPrefixForComparison = finalScan.take(prefix.length) // Ambil bagian awal scan sepanjang prefix
+                            Pair(prefix, levenshtein(scanPrefixForComparison.uppercase(), prefix))
                         }
-                        finalScan = prefix13 + last4
+
+                        // Temukan prefix dengan jarak terkecil (paling mirip)
+                        val bestMatch = distances.minByOrNull { it.second }
+
+                        // Gunakan prefix dari best match, bukan dari kanban
+                        val matchedPrefix13 = if (bestMatch != null && bestMatch.second < 3) { // Threshold bisa disesuaikan, misalnya 3 karakter berbeda
+                            // Ambil 13 karakter dari prefix yang paling mirip, tambahkan nol jika kurang
+                            bestMatch.first.padEnd(13, '0').take(13)
+                        } else {
+                            // Jika tidak ada yang mirip (jarak terlalu jauh), gunakan 13 karakter pertama dari kanban sebagai fallback
+                            // Atau bisa juga memilih untuk tidak mengganti finalScan sama sekali
+                            kanban.padEnd(13, '0').take(13)
+                        }
+
+                        // Ambil 4 digit terakhir dari finalScan (sudah dinormalisasi berdasarkan kanban sebelumnya)
+                        val last4FromScan = if (finalScan.length >= 4) {
+                            finalScan.takeLast(4)
+                        } else {
+                            finalScan.padStart(4, '0') // Jika scan kurang dari 4, isi dengan nol di depan
+                        }
+
+                        // Gabungkan prefix yang paling mirip (13 karakter) dengan 4 digit terakhir dari scan
+                        finalScan = matchedPrefix13 + last4FromScan
                     }
                 }
 
@@ -198,13 +276,13 @@ class RecordActivity : AppCompatActivity() {
                     kanban.startsWith("MF2E") ||
                     kanban.startsWith("GC")
                 ) {
-                    if (cleaned.isNotEmpty()) {
-                        val builder = StringBuilder(cleaned)
+                    if (finalScan.isNotEmpty()) { // Gunakan finalScan
+                        val builder = StringBuilder(finalScan) // Gunakan finalScan
 
                         // MF1E / MF2E → bandingkan 4 digit pertama
                         if (kanban.startsWith("MF1E") || kanban.startsWith("MF2E")) {
                             val prefix = kanban.take(4)
-                            val scanPrefix = cleaned.take(4)
+                            val scanPrefix = finalScan.take(4) // Gunakan finalScan
 
                             val dist = levenshtein(scanPrefix, prefix)
                             val similarity = 1.0 - (dist.toDouble() / prefix.length.toDouble())
@@ -228,8 +306,8 @@ class RecordActivity : AppCompatActivity() {
                         if (kanban.startsWith("GC")) {
                             val prefix = "GC"
 
-                            // Normalisasi dulu cleaned ke uppercase
-                            val cleanedUpper = cleaned.uppercase()
+                            // Normalisasi dulu cleaned ke uppercase (finalScan sudah uppercase)
+                            val cleanedUpper = finalScan.uppercase() // finalScan sudah uppercase
 
                             // Cek khusus kalau hanya kebaca sebagian (g-/ -c/ g?/ ?c)
                             if (cleanedUpper.length >= 1) {
