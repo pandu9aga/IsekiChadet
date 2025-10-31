@@ -29,6 +29,9 @@ import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Locale
+import androidx.exifinterface.media.ExifInterface
+import android.graphics.Matrix
+import android.graphics.Bitmap
 
 class RecordActivity : AppCompatActivity() {
 
@@ -46,6 +49,13 @@ class RecordActivity : AppCompatActivity() {
     private lateinit var takePictureLauncher: ActivityResultLauncher<Uri>
     private val client = OkHttpClient()
 
+    private var photoTaken: Boolean = false // Tambahkan flag
+
+    companion object {
+        private const val KEY_PHOTO_PATH = "current_photo_path"
+        private const val KEY_PHOTO_TAKEN = "photo_taken" // Tambahkan key untuk flag
+    }
+
     // QR Scanner launcher
     private val qrLauncher = registerForActivityResult(ScanContract()) { result ->
         if (result.contents != null) {
@@ -58,9 +68,22 @@ class RecordActivity : AppCompatActivity() {
         }
     }
 
+    // Simpan nilai currentPhotoPath saat aktivitas akan dihancurkan karena konfigurasi berubah
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_PHOTO_PATH, currentPhotoPath)
+        outState.putBoolean(KEY_PHOTO_TAKEN, photoTaken) // Simpan flag
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_record)
+
+        // Pulihkan currentPhotoPath dan flag photoTaken jika savedInstanceState ada
+        if (savedInstanceState != null) {
+            currentPhotoPath = savedInstanceState.getString(KEY_PHOTO_PATH)
+            photoTaken = savedInstanceState.getBoolean(KEY_PHOTO_TAKEN) // Pulihkan flag
+        }
 
         edtNoProduksi = findViewById(R.id.edtNoProduksi)
         edtNoChasisKanban = findViewById(R.id.edtNoChasisKanban)
@@ -80,10 +103,27 @@ class RecordActivity : AppCompatActivity() {
         takePictureLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
             if (success) {
                 currentPhotoPath?.let { path ->
-                    val bitmap = BitmapFactory.decodeFile(path)
-                    cameraImage.setImageBitmap(bitmap)
-                    recognizeText(bitmap)
+                    val imageFile = File(path)
+                    if (imageFile.exists()) {
+                        var bitmap = BitmapFactory.decodeFile(path)
+                        if (bitmap != null) {
+                            // Terapkan rotasi berdasarkan EXIF
+                            bitmap = rotateBitmapIfRequired(bitmap, path)
+
+                            cameraImage.setImageBitmap(bitmap)
+                            recognizeText(bitmap)
+                            photoTaken = true
+                        } else {
+                            Toast.makeText(this, "Failed to decode image", Toast.LENGTH_SHORT).show()
+                            photoTaken = false
+                        }
+                    } else {
+                        Toast.makeText(this, "Image file not found", Toast.LENGTH_SHORT).show()
+                        photoTaken = false
+                    }
                 }
+            } else {
+                photoTaken = false
             }
         }
 
@@ -123,6 +163,24 @@ class RecordActivity : AppCompatActivity() {
                 else -> false
             }
         }
+
+        // Setelah aktivitas dibuat ulang, jika foto sebelumnya telah diambil,
+        // coba tampilkan kembali
+        if (photoTaken && currentPhotoPath != null) {
+            val imageFile = File(currentPhotoPath!!)
+            if (imageFile.exists()) {
+                var bitmap = BitmapFactory.decodeFile(currentPhotoPath!!)
+                if (bitmap != null) {
+                    // Terapkan rotasi berdasarkan EXIF saat menampilkan ulang
+                    bitmap = rotateBitmapIfRequired(bitmap, currentPhotoPath!!)
+                    cameraImage.setImageBitmap(bitmap)
+                } else {
+                    photoTaken = false
+                }
+            } else {
+                photoTaken = false
+            }
+        }
     }
 
     private fun createImageFile(): File {
@@ -142,6 +200,7 @@ class RecordActivity : AppCompatActivity() {
         }
         photoFile?.also {
             val photoUri: Uri = FileProvider.getUriForFile(this, "${applicationContext.packageName}.provider", it)
+            photoTaken = false // Reset flag sebelum mengambil foto baru
             takePictureLauncher.launch(photoUri)
         }
     }
@@ -233,8 +292,8 @@ class RecordActivity : AppCompatActivity() {
                 if (kanban.startsWith("ISKI4550") || // Tetap gunakan ini untuk men-trigger CASE 1 secara umum
                     kanban.startsWith("ISKI0024") ||
                     kanban.startsWith("ISKI3410") ||
-                    kanban.startsWith("ISKM2E56")
-                ) {
+                    kanban.startsWith("ISKM2E56"))
+                {
                     if (finalScan.isNotEmpty()) { // Cek jika scan tidak kosong
                         // Daftar prefix yang valid untuk CASE 1
                         val validPrefixes = listOf("ISKI4550", "ISKI0024", "ISKI3410", "ISKM2E56")
@@ -384,7 +443,7 @@ class RecordActivity : AppCompatActivity() {
             .addFormDataPart("No_Chasis_Scan", noScan)
             .addFormDataPart("Status_Record", status)
 
-        if (status == "NG" && currentPhotoPath != null) {
+        if (currentPhotoPath != null) {
             val file = File(currentPhotoPath!!)
             if (file.exists()) {
                 val mediaType = "image/jpeg".toMediaType()
@@ -459,11 +518,34 @@ class RecordActivity : AppCompatActivity() {
     }
 
     private fun cleanupPhoto() {
-        currentPhotoPath?.let { path ->
-            val file = File(path)
-            if (file.exists()) file.delete()
-            currentPhotoPath = null
+        if (photoTaken) { // Hanya hapus jika foto benar-benar diambil
+            currentPhotoPath?.let { path ->
+                val file = File(path)
+                if (file.exists()) file.delete()
+            }
+        }
+        currentPhotoPath = null
+        photoTaken = false // Reset flag saat membersihkan
+    }
+
+    private fun rotateBitmapIfRequired(bitmap: Bitmap, path: String): Bitmap {
+        val exif = ExifInterface(path)
+        val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+
+        return when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> rotateBitmap(bitmap, 90)
+            ExifInterface.ORIENTATION_ROTATE_180 -> rotateBitmap(bitmap, 180)
+            ExifInterface.ORIENTATION_ROTATE_270 -> rotateBitmap(bitmap, 270)
+            // ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> // Tidak umum untuk kamera
+            // ExifInterface.ORIENTATION_FLIP_VERTICAL -> // Tidak umum untuk kamera
+            else -> bitmap // Tidak perlu diputar
         }
     }
 
+    private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
+        val matrix = Matrix().apply {
+            postRotate(degrees.toFloat())
+        }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
 }

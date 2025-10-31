@@ -65,5 +65,6 @@ dependencies {
     implementation ("com.google.android.material:material:1.12.0")
     implementation ("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation ("com.google.zxing:core:3.5.2")
+    implementation ("androidx.exifinterface:exifinterface:1.3.7")
 
 }
