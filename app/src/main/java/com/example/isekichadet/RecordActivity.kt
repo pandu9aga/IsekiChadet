@@ -32,6 +32,7 @@ import java.util.Locale
 import androidx.exifinterface.media.ExifInterface
 import android.graphics.Matrix
 import android.graphics.Bitmap
+import android.util.Log
 
 class RecordActivity : AppCompatActivity() {
 
@@ -44,6 +45,10 @@ class RecordActivity : AppCompatActivity() {
     private lateinit var scanQRBtn: Button
     private lateinit var submitBtn: Button
 
+    // --- TAMBAHAN: Elemen UI untuk notifikasi validasi ---
+    private lateinit var validationErrorDiv: LinearLayout
+    private lateinit var validationErrorText: TextView
+
     private var currentPhotoPath: String? = null
     private lateinit var requestPermissionLauncher: ActivityResultLauncher<String>
     private lateinit var takePictureLauncher: ActivityResultLauncher<Uri>
@@ -54,15 +59,22 @@ class RecordActivity : AppCompatActivity() {
     companion object {
         private const val KEY_PHOTO_PATH = "current_photo_path"
         private const val KEY_PHOTO_TAKEN = "photo_taken" // Tambahkan key untuk flag
+        private const val CHECK_PREREQUISITES_URL = "http://192.168.173.207/iseki_chadet/public/api/records/check-prerequisites" // Ganti dengan URL server PODIUM kamu
     }
 
-    // QR Scanner launcher
+    // QR Scanner launcher - Digunakan untuk scan QR Code
     private val qrLauncher = registerForActivityResult(ScanContract()) { result ->
         if (result.contents != null) {
             val parts = result.contents.split(";")
             if (parts.size > 4) {
                 edtNoProduksi.setText(parts[0])
                 edtNoChasisKanban.setText(parts[4])
+
+                // --- LOGIKA TAMBAHAN: Panggil API validasi prasyarat ---
+                val sequenceNo = parts[0].trim()
+                // Pastikan elemen UI untuk notifikasi sudah diinisialisasi
+                checkPrerequisites(sequenceNo, validationErrorDiv, validationErrorText, captureImgBtn, submitBtn)
+
                 updateBadge()
             }
         }
@@ -85,6 +97,7 @@ class RecordActivity : AppCompatActivity() {
             photoTaken = savedInstanceState.getBoolean(KEY_PHOTO_TAKEN) // Pulihkan flag
         }
 
+        // Inisialisasi elemen UI utama
         edtNoProduksi = findViewById(R.id.edtNoProduksi)
         edtNoChasisKanban = findViewById(R.id.edtNoChasisKanban)
         edtNoChasisScan = findViewById(R.id.edtNoChasisScan)
@@ -93,6 +106,10 @@ class RecordActivity : AppCompatActivity() {
         captureImgBtn = findViewById(R.id.captureImgBtn)
         scanQRBtn = findViewById(R.id.scanQRBtn)
         submitBtn = findViewById(R.id.submitBtn)
+
+        // --- INISIALISASI ELEMEN UI UNTUK NOTIFIKASI VALIDASI ---
+        validationErrorDiv = findViewById(R.id.validationErrorDiv) // Ganti dengan ID yang benar di layout kamu
+        validationErrorText = findViewById(R.id.validationErrorText) // Ganti dengan ID yang benar di layout kamu
 
         // Ambil gambar kamera
         requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
@@ -181,6 +198,141 @@ class RecordActivity : AppCompatActivity() {
                 photoTaken = false
             }
         }
+    }
+
+    // Fungsi untuk memeriksa prasyarat via API
+    private fun checkPrerequisites(
+        sequenceNo: String,
+        errorDiv: LinearLayout, // Terima referensi elemen UI dari caller
+        errorText: TextView,
+        cameraBtn: Button,
+        submitBtn: Button
+    ) {
+        // Sembunyikan notifikasi error sebelumnya
+        runOnUiThread {
+            errorDiv.visibility = View.GONE
+            // Disable tombol kamera dan submit sementara
+            cameraBtn.isEnabled = false
+            submitBtn.isEnabled = false
+        }
+
+
+        val requestBody = JSONObject(mapOf("sequence_no" to sequenceNo)).toString()
+
+        val request = Request.Builder()
+            .url(CHECK_PREREQUISITES_URL)
+            .post(requestBody.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread {
+                    // Tampilkan notifikasi error umum
+                    errorText.text = "Gagal menghubungi server untuk validasi prasyarat: ${e.message}"
+                    errorDiv.visibility = View.VISIBLE
+
+                    // Keep tombol kamera dan submit disabled sampai user scan ulang atau fix masalah
+                    cameraBtn.isEnabled = false
+                    submitBtn.isEnabled = false
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                // Ambil string body di background thread
+                val responseBodyString = try {
+                    response.body?.string()
+                } catch (e: IOException) {
+                    runOnUiThread {
+                        errorText.text = "Gagal membaca respons server: ${e.message}"
+                        errorDiv.visibility = View.VISIBLE
+                        cameraBtn.isEnabled = false
+                        submitBtn.isEnabled = false
+                    }
+                    return
+                }
+
+                // Tambahkan log untuk melihat respons mentah dari server
+                Log.d("CheckPrereq_RAW", "Raw Response: $responseBodyString")
+                Log.d("CheckPrereq_Code", "Response Code: ${response.code}")
+
+                // Semua pemrosesan JSON dan UI dilakukan di main thread
+                runOnUiThread {
+                    if (response.isSuccessful) {
+                        // Tambahkan logging untuk debugging (opsional)
+                        // Log.d("API Response", responseBodyString ?: "Response body is null")
+
+                        try {
+                            Log.d("CheckPrereq_JSON", "Parsed JSON: $responseBodyString")
+                            val jsonResponse = JSONObject(responseBodyString ?: "{}")
+
+                            val success = jsonResponse.optBoolean("success", false)
+                            val message = jsonResponse.optString("message", "Tidak ada pesan dari server.")
+
+                            Log.d("CheckPrereq_Success", "Success: $success")
+                            Log.d("CheckPrereq_Message", "Message: $message")
+
+                            if (success) {
+                                // Periksa field tambahan yang dikirim jika success = true
+                                val prerequisitesMet = jsonResponse.optBoolean("prerequisites_met", false)
+                                Log.d("CheckPrereq_Met", "Prerequisites Met: $prerequisitesMet")
+                                if (prerequisitesMet) {
+                                    // Prasyarat terpenuhi
+                                    // Enable tombol kamera dan submit
+                                    cameraBtn.isEnabled = true
+                                    submitBtn.isEnabled = true
+                                    // Sembunyikan notifikasi error jika muncul sebelumnya
+                                    errorDiv.visibility = View.GONE
+                                } else {
+                                    // Ini seharusnya tidak terjadi jika API PHP di atas benar-benar mengikuti logika
+                                    // Karena jika success=true, maka prerequisites_met juga harus true
+                                    // Tapi tetap kita handle
+                                    errorText.text = message // Gunakan pesan dari API
+                                    errorDiv.visibility = View.VISIBLE
+                                    cameraBtn.isEnabled = false
+                                    submitBtn.isEnabled = false
+                                }
+                            } else {
+                                // API mengembalikan success = false (ini termasuk kasus prasyarat tidak terpenuhi)
+                                // Ambil pesan dari API
+                                val errorMessage = message // Gunakan pesan dari API
+                                errorText.text = errorMessage
+                                errorDiv.visibility = View.VISIBLE
+                                cameraBtn.isEnabled = false
+                                submitBtn.isEnabled = false
+                            }
+                        } catch (e: org.json.JSONException) {
+                            Log.e("CheckPrereq_JSON_ERR", "JSON Parse Error: ${e.message}")
+                            // Tangani error parsing JSON jika respons bukan JSON yang valid
+                            errorText.text = "Error parsing server response: ${e.message}"
+                            errorDiv.visibility = View.VISIBLE
+                            cameraBtn.isEnabled = false
+                            submitBtn.isEnabled = false
+                        }
+                    } else {
+                        Log.e("CheckPrereq_HTTP_ERR", "HTTP Error ${response.code}: $responseBodyString")
+                        // Jika respons tidak sukses (misalnya 400, 500)
+                        // Coba parsing respons error juga sebagai JSON (jika memungkinkan)
+                        var errorMessage = "Server error saat validasi prasyarat. Kode: ${response.code}"
+
+                        if (!responseBodyString.isNullOrBlank()) {
+                            try {
+                                val errorJsonResponse = JSONObject(responseBodyString)
+                                // Ambil pesan dari body error JSON jika ada
+                                errorMessage = errorJsonResponse.optString("message", errorMessage)
+                            } catch (e: org.json.JSONException) {
+                                // Jika body error bukan JSON, gunakan pesan default atau body teks biasa
+                                errorMessage = "Server error (non-JSON response): ${response.code} - ${responseBodyString}"
+                            }
+                        }
+
+                        errorText.text = errorMessage
+                        errorDiv.visibility = View.VISIBLE
+                        cameraBtn.isEnabled = false
+                        submitBtn.isEnabled = false
+                    }
+                }
+            }
+        })
     }
 
     private fun createImageFile(): File {
@@ -288,19 +440,19 @@ class RecordActivity : AppCompatActivity() {
                 // Perhatikan bahwa 'cleaned' diganti dengan 'finalScan' atau 'cleaned' yang sudah dinormalisasi
                 // dalam logika CASE 2, terutama untuk take(4) dan takeLast(4) dll.
 
-                // === CASE 1: ISKI4550 / ISKI0024 / ISKI3410 / ISKM2E56 (Tentukan berdasarkan kemiripan) ===
+                // === CASE 1: ISKI4550 / ISKI0024 / ISKI3410 / ISKM2E56 (Tentukan prefix berdasarkan kemiripan, sisanya dari kanban) ===
                 if (kanban.startsWith("ISKI4550") || // Tetap gunakan ini untuk men-trigger CASE 1 secara umum
                     kanban.startsWith("ISKI0024") ||
                     kanban.startsWith("ISKI3410") ||
-                    kanban.startsWith("ISKM2E56"))
-                {
+                    kanban.startsWith("ISKM2E56")
+                ) {
                     if (finalScan.isNotEmpty()) { // Cek jika scan tidak kosong
-                        // Daftar prefix yang valid untuk CASE 1
+                        // Daftar prefix yang valid untuk CASE 1 (panjang 8 karakter)
                         val validPrefixes = listOf("ISKI4550", "ISKI0024", "ISKI3410", "ISKM2E56")
 
-                        // Hitung jarak Levenshtein antara awal dari finalScan dan setiap valid prefix
+                        // Hitung jarak Levenshtein antara awal dari finalScan dan setiap valid prefix (panjang 8)
                         val distances = validPrefixes.map { prefix ->
-                            val scanPrefixForComparison = finalScan.take(prefix.length) // Ambil bagian awal scan sepanjang prefix
+                            val scanPrefixForComparison = finalScan.take(prefix.length) // Ambil bagian awal scan sepanjang prefix (8)
                             Pair(prefix, levenshtein(scanPrefixForComparison.uppercase(), prefix))
                         }
 
@@ -308,24 +460,22 @@ class RecordActivity : AppCompatActivity() {
                         val bestMatch = distances.minByOrNull { it.second }
 
                         // Gunakan prefix dari best match, bukan dari kanban
-                        val matchedPrefix13 = if (bestMatch != null && bestMatch.second < 3) { // Threshold bisa disesuaikan, misalnya 3 karakter berbeda
-                            // Ambil 13 karakter dari prefix yang paling mirip, tambahkan nol jika kurang
-                            bestMatch.first.padEnd(13, '0').take(13)
+                        val matchedPrefix = if (bestMatch != null && bestMatch.second < 3) { // Threshold bisa disesuaikan
+                            bestMatch.first
                         } else {
-                            // Jika tidak ada yang mirip (jarak terlalu jauh), gunakan 13 karakter pertama dari kanban sebagai fallback
-                            // Atau bisa juga memilih untuk tidak mengganti finalScan sama sekali
-                            kanban.padEnd(13, '0').take(13)
+                            // Jika tidak ada yang mirip, gunakan prefix dari kanban sebagai fallback
+                            kanban.take(8) // Ambil 8 karakter pertama dari kanban
                         }
 
-                        // Ambil 4 digit terakhir dari finalScan (sudah dinormalisasi berdasarkan kanban sebelumnya)
-                        val last4FromScan = if (finalScan.length >= 4) {
-                            finalScan.takeLast(4)
+                        // Ambil sisa karakter (dari indeks ke-8) dari KANBAN (bukan scan)
+                        val suffixFromKanban = if (kanban.length > matchedPrefix.length) {
+                            kanban.substring(matchedPrefix.length) // Ambil dari indeks setelah prefix
                         } else {
-                            finalScan.padStart(4, '0') // Jika scan kurang dari 4, isi dengan nol di depan
+                            "" // Jika panjang prefix >= panjang kanban
                         }
 
-                        // Gabungkan prefix yang paling mirip (13 karakter) dengan 4 digit terakhir dari scan
-                        finalScan = matchedPrefix13 + last4FromScan
+                        // Gabungkan prefix yang dipilih dengan suffix dari kanban
+                        finalScan = matchedPrefix + suffixFromKanban
                     }
                 }
 
@@ -458,7 +608,7 @@ class RecordActivity : AppCompatActivity() {
         val requestBody = requestBuilder.build()
 
         val request = Request.Builder()
-            .url("http://192.168.173.207/iseki_chadet/public/api/records/store")
+            .url("http://192.168.173.207/iseki_chadet/public/api/records/storenew") // Ganti dengan URL API kamu
             .post(requestBody)
             .build()
 
