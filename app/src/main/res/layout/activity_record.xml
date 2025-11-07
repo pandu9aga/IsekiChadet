@@ -20,27 +20,6 @@
         android:layout_height="wrap_content"
         android:orientation="vertical" >
 
-            <!-- Tambahkan div untuk notifikasi error prasyarat -->
-            <LinearLayout
-                android:id="@+id/validationErrorDiv"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="@color/light_pink"
-                android:padding="16dp"
-                android:layout_marginBottom="8dp"
-                android:visibility="gone" >
-                <TextView
-                    android:id="@+id/validationErrorText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Step sebelumnya belum selesai."
-                    android:textColor="@color/white"
-                    android:textStyle="bold"
-                    android:textSize="16sp"
-                    android:gravity="center"/>
-            </LinearLayout>
-
             <!-- No Produksi -->
             <TextView
                 android:layout_width="wrap_content"
@@ -114,6 +93,27 @@
                     android:layout_marginStart="8dp"
                     android:backgroundTint="@color/light_pink"
                     android:textColor="@android:color/white" />
+            </LinearLayout>
+
+            <!-- Tambahkan div untuk notifikasi error prasyarat -->
+            <LinearLayout
+                android:id="@+id/validationErrorDiv"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@android:color/holo_red_light"
+                android:padding="16dp"
+                android:layout_marginBottom="8dp"
+                android:visibility="gone" >
+                <TextView
+                    android:id="@+id/validationErrorText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Step sebelumnya belum selesai."
+                    android:textColor="@color/white"
+                    android:textStyle="bold"
+                    android:textSize="16sp"
+                    android:gravity="center"/>
             </LinearLayout>
 
             <!-- Preview Kamera -->
