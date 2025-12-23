@@ -37,6 +37,7 @@ import android.util.Log
 class RecordActivity : AppCompatActivity() {
 
     private lateinit var edtNoProduksi: EditText
+    private lateinit var edtTglProduksi: EditText
     private lateinit var edtNoChasisKanban: EditText
     private lateinit var edtNoChasisScan: EditText
     private lateinit var statusBadge: TextView
@@ -68,12 +69,14 @@ class RecordActivity : AppCompatActivity() {
             val parts = result.contents.split(";")
             if (parts.size > 4) {
                 edtNoProduksi.setText(parts[0])
+                edtTglProduksi.setText(parts[1])
                 edtNoChasisKanban.setText(parts[4])
 
                 // --- LOGIKA TAMBAHAN: Panggil API validasi prasyarat ---
                 val sequenceNo = parts[0].trim()
+                val dateProduction = parts[1]
                 // Pastikan elemen UI untuk notifikasi sudah diinisialisasi
-                checkPrerequisites(sequenceNo, validationErrorDiv, validationErrorText, captureImgBtn, submitBtn)
+                checkPrerequisites(sequenceNo, dateProduction, validationErrorDiv, validationErrorText, captureImgBtn, submitBtn)
 
                 updateBadge()
             }
@@ -99,6 +102,7 @@ class RecordActivity : AppCompatActivity() {
 
         // Inisialisasi elemen UI utama
         edtNoProduksi = findViewById(R.id.edtNoProduksi)
+        edtTglProduksi = findViewById(R.id.edtTglProduksi)
         edtNoChasisKanban = findViewById(R.id.edtNoChasisKanban)
         edtNoChasisScan = findViewById(R.id.edtNoChasisScan)
         statusBadge = findViewById(R.id.statusBadge)
@@ -203,6 +207,7 @@ class RecordActivity : AppCompatActivity() {
     // Fungsi untuk memeriksa prasyarat via API
     private fun checkPrerequisites(
         sequenceNo: String,
+        dateProduction: String,
         errorDiv: LinearLayout, // Terima referensi elemen UI dari caller
         errorText: TextView,
         cameraBtn: Button,
@@ -467,14 +472,13 @@ class RecordActivity : AppCompatActivity() {
                             kanban.take(8) // Ambil 8 karakter pertama dari kanban
                         }
 
-                        // Ambil sisa karakter (dari indeks ke-8) dari KANBAN (bukan scan)
                         val suffixFromKanban = if (kanban.length > matchedPrefix.length) {
                             kanban.substring(matchedPrefix.length) // Ambil dari indeks setelah prefix
                         } else {
                             "" // Jika panjang prefix >= panjang kanban
                         }
 
-                        // Gabungkan prefix yang dipilih dengan suffix dari kanban
+                        // Gabungkan prefix yang dipilih
                         finalScan = matchedPrefix + suffixFromKanban
                     }
                 }
@@ -583,12 +587,14 @@ class RecordActivity : AppCompatActivity() {
 
     private fun submitData() {
         val noProduksi = edtNoProduksi.text.toString().trim()
+        val tglProduksi = edtTglProduksi.text.toString().trim()
         val noKanban = edtNoChasisKanban.text.toString().trim()
         val noScan = edtNoChasisScan.text.toString().trim()
         val status = if (noKanban == noScan) "OK" else "NG"
 
         val requestBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("No_Produksi", noProduksi)
+            .addFormDataPart("Tgl_Produksi", tglProduksi)
             .addFormDataPart("No_Chasis_Kanban", noKanban)
             .addFormDataPart("No_Chasis_Scan", noScan)
             .addFormDataPart("Status_Record", status)
