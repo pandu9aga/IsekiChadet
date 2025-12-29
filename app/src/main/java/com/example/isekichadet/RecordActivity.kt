@@ -222,8 +222,8 @@ class RecordActivity : AppCompatActivity() {
         }
 
 
-        val requestBody = JSONObject(mapOf("sequence_no" to sequenceNo)).toString()
-
+//        val requestBody = JSONObject(mapOf("sequence_no" to sequenceNo)).toString()
+        val requestBody = JSONObject(mapOf("sequence_no" to sequenceNo, "date_production" to dateProduction)).toString()
         val request = Request.Builder()
             .url(CHECK_PREREQUISITES_URL)
             .post(requestBody.toRequestBody("application/json".toMediaType()))
