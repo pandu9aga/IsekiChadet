@@ -446,116 +446,116 @@ class RecordActivity : AppCompatActivity() {
                 // dalam logika CASE 2, terutama untuk take(4) dan takeLast(4) dll.
 
                 // === CASE 1: ISKI4550 / ISKI0024 / ISKI3410 / ISKM2E56 (Tentukan prefix berdasarkan kemiripan, sisanya dari kanban) ===
-                if (kanban.startsWith("ISKI4550") || // Tetap gunakan ini untuk men-trigger CASE 1 secara umum
-                    kanban.startsWith("ISKI0024") ||
-                    kanban.startsWith("ISKI3410") ||
-                    kanban.startsWith("ISKM2E56")
-                ) {
-                    if (finalScan.isNotEmpty()) { // Cek jika scan tidak kosong
-                        // Daftar prefix yang valid untuk CASE 1 (panjang 8 karakter)
-                        val validPrefixes = listOf("ISKI4550", "ISKI0024", "ISKI3410", "ISKM2E56")
-
-                        // Hitung jarak Levenshtein antara awal dari finalScan dan setiap valid prefix (panjang 8)
-                        val distances = validPrefixes.map { prefix ->
-                            val scanPrefixForComparison = finalScan.take(prefix.length) // Ambil bagian awal scan sepanjang prefix (8)
-                            Pair(prefix, levenshtein(scanPrefixForComparison.uppercase(), prefix))
-                        }
-
-                        // Temukan prefix dengan jarak terkecil (paling mirip)
-                        val bestMatch = distances.minByOrNull { it.second }
-
-                        // Gunakan prefix dari best match, bukan dari kanban
-                        val matchedPrefix = if (bestMatch != null && bestMatch.second < 3) { // Threshold bisa disesuaikan
-                            bestMatch.first
-                        } else {
-                            // Jika tidak ada yang mirip, gunakan prefix dari kanban sebagai fallback
-                            kanban.take(8) // Ambil 8 karakter pertama dari kanban
-                        }
-
-                        val suffixFromKanban = if (kanban.length > matchedPrefix.length) {
-                            kanban.substring(matchedPrefix.length) // Ambil dari indeks setelah prefix
-                        } else {
-                            "" // Jika panjang prefix >= panjang kanban
-                        }
-
-                        // Gabungkan prefix yang dipilih
-                        finalScan = matchedPrefix + suffixFromKanban
-                    }
-                }
+//                if (kanban.startsWith("ISKI4550") || // Tetap gunakan ini untuk men-trigger CASE 1 secara umum
+//                    kanban.startsWith("ISKI0024") ||
+//                    kanban.startsWith("ISKI3410") ||
+//                    kanban.startsWith("ISKM2E56")
+//                ) {
+//                    if (finalScan.isNotEmpty()) { // Cek jika scan tidak kosong
+//                        // Daftar prefix yang valid untuk CASE 1 (panjang 8 karakter)
+//                        val validPrefixes = listOf("ISKI4550", "ISKI0024", "ISKI3410", "ISKM2E56")
+//
+//                        // Hitung jarak Levenshtein antara awal dari finalScan dan setiap valid prefix (panjang 8)
+//                        val distances = validPrefixes.map { prefix ->
+//                            val scanPrefixForComparison = finalScan.take(prefix.length) // Ambil bagian awal scan sepanjang prefix (8)
+//                            Pair(prefix, levenshtein(scanPrefixForComparison.uppercase(), prefix))
+//                        }
+//
+//                        // Temukan prefix dengan jarak terkecil (paling mirip)
+//                        val bestMatch = distances.minByOrNull { it.second }
+//
+//                        // Gunakan prefix dari best match, bukan dari kanban
+//                        val matchedPrefix = if (bestMatch != null && bestMatch.second < 3) { // Threshold bisa disesuaikan
+//                            bestMatch.first
+//                        } else {
+//                            // Jika tidak ada yang mirip, gunakan prefix dari kanban sebagai fallback
+//                            kanban.take(8) // Ambil 8 karakter pertama dari kanban
+//                        }
+//
+//                        val suffixFromKanban = if (kanban.length > matchedPrefix.length) {
+//                            kanban.substring(matchedPrefix.length) // Ambil dari indeks setelah prefix
+//                        } else {
+//                            "" // Jika panjang prefix >= panjang kanban
+//                        }
+//
+//                        // Gabungkan prefix yang dipilih
+//                        finalScan = matchedPrefix + suffixFromKanban
+//                    }
+//                }
 
                 // === CASE 2: Prefix MF1E / MF2E / GC ===
-                else if (
-                    kanban.startsWith("MF1E") ||
-                    kanban.startsWith("MF2E") ||
-                    kanban.startsWith("GC")
-                ) {
-                    if (finalScan.isNotEmpty()) { // Gunakan finalScan
-                        val builder = StringBuilder(finalScan) // Gunakan finalScan
-
-                        // MF1E / MF2E → bandingkan 4 digit pertama
-                        if (kanban.startsWith("MF1E") || kanban.startsWith("MF2E")) {
-                            val prefix = kanban.take(4)
-                            val scanPrefix = finalScan.take(4) // Gunakan finalScan
-
-                            val dist = levenshtein(scanPrefix, prefix)
-                            val similarity = 1.0 - (dist.toDouble() / prefix.length.toDouble())
-
-                            if (similarity >= 0.5 || scanPrefix.length < 4) {
-                                // force replace prefix
-                                if (builder.length < 4) {
-                                    builder.insert(0, prefix.substring(builder.length))
-                                }
-                                for (i in 0 until prefix.length) {
-                                    if (i < builder.length) {
-                                        builder.setCharAt(i, prefix[i])
-                                    } else {
-                                        builder.append(prefix[i])
-                                    }
-                                }
-                            }
-                        }
-
-                        // GC → bandingkan 1 digit pertama
-                        if (kanban.startsWith("GC")) {
-                            val prefix = "GC"
-
-                            // Normalisasi dulu cleaned ke uppercase (finalScan sudah uppercase)
-                            val cleanedUpper = finalScan.uppercase() // finalScan sudah uppercase
-
-                            // Cek khusus kalau hanya kebaca sebagian (g-/ -c/ g?/ ?c)
-                            if (cleanedUpper.length >= 1) {
-                                val first = cleanedUpper.getOrNull(0)
-                                val second = cleanedUpper.getOrNull(1)
-
-                                val matchPartialGC =
-                                    (first == 'G' && (second == null || second == '-' || second == '?' || second == 'C')) ||
-                                            (second == 'C' && (first == null || first == '-' || first == '?' || first == 'G'))
-
-                                if (matchPartialGC) {
-                                    if (builder.length < 2) builder.setLength(2) // pastikan panjang minimal 2
-                                    builder.setCharAt(0, 'G')
-                                    builder.setCharAt(1, 'C')
-                                }
-                            }
-
-                            // kalau masih salah → paksa juga jadi GC
-                            if (builder.length < 2 || builder[0] != 'G' || builder[1] != 'C') {
-                                if (builder.length < 2) {
-                                    builder.insert(0, prefix.substring(builder.length))
-                                }
-                                for (i in 0 until prefix.length) {
-                                    if (i < builder.length) {
-                                        builder.setCharAt(i, prefix[i])
-                                    } else {
-                                        builder.append(prefix[i])
-                                    }
-                                }
-                            }
-                        }
-
-                        finalScan = builder.toString()
-                    }
-                }
+//                if (
+//                    kanban.startsWith("MF1E") ||
+//                    kanban.startsWith("MF2E") ||
+//                    kanban.startsWith("GC")
+//                ) {
+//                    if (finalScan.isNotEmpty()) { // Gunakan finalScan
+//                        val builder = StringBuilder(finalScan) // Gunakan finalScan
+//
+//                        // MF1E / MF2E → bandingkan 4 digit pertama
+//                        if (kanban.startsWith("MF1E") || kanban.startsWith("MF2E")) {
+//                            val prefix = kanban.take(4)
+//                            val scanPrefix = finalScan.take(4) // Gunakan finalScan
+//
+//                            val dist = levenshtein(scanPrefix, prefix)
+//                            val similarity = 1.0 - (dist.toDouble() / prefix.length.toDouble())
+//
+//                            if (similarity >= 0.5 || scanPrefix.length < 4) {
+//                                // force replace prefix
+//                                if (builder.length < 4) {
+//                                    builder.insert(0, prefix.substring(builder.length))
+//                                }
+//                                for (i in 0 until prefix.length) {
+//                                    if (i < builder.length) {
+//                                        builder.setCharAt(i, prefix[i])
+//                                    } else {
+//                                        builder.append(prefix[i])
+//                                    }
+//                                }
+//                            }
+//                        }
+//
+//                        // GC → bandingkan 1 digit pertama
+//                        if (kanban.startsWith("GC")) {
+//                            val prefix = "GC"
+//
+//                            // Normalisasi dulu cleaned ke uppercase (finalScan sudah uppercase)
+//                            val cleanedUpper = finalScan.uppercase() // finalScan sudah uppercase
+//
+//                            // Cek khusus kalau hanya kebaca sebagian (g-/ -c/ g?/ ?c)
+//                            if (cleanedUpper.length >= 1) {
+//                                val first = cleanedUpper.getOrNull(0)
+//                                val second = cleanedUpper.getOrNull(1)
+//
+//                                val matchPartialGC =
+//                                    (first == 'G' && (second == null || second == '-' || second == '?' || second == 'C')) ||
+//                                            (second == 'C' && (first == null || first == '-' || first == '?' || first == 'G'))
+//
+//                                if (matchPartialGC) {
+//                                    if (builder.length < 2) builder.setLength(2) // pastikan panjang minimal 2
+//                                    builder.setCharAt(0, 'G')
+//                                    builder.setCharAt(1, 'C')
+//                                }
+//                            }
+//
+//                            // kalau masih salah → paksa juga jadi GC
+//                            if (builder.length < 2 || builder[0] != 'G' || builder[1] != 'C') {
+//                                if (builder.length < 2) {
+//                                    builder.insert(0, prefix.substring(builder.length))
+//                                }
+//                                for (i in 0 until prefix.length) {
+//                                    if (i < builder.length) {
+//                                        builder.setCharAt(i, prefix[i])
+//                                    } else {
+//                                        builder.append(prefix[i])
+//                                    }
+//                                }
+//                            }
+//                        }
+//
+//                        finalScan = builder.toString()
+//                    }
+//                }
 
                 edtNoChasisScan.setText(finalScan)
                 updateBadge()
