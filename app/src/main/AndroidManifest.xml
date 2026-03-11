@@ -33,7 +33,12 @@
         <activity
             android:name=".RecordActivity"
             android:exported="true"
-            android:label="Record" />
+            android:label="Record (Legacy)" />
+
+        <activity
+            android:name=".YoloRecordActivity"
+            android:exported="true"
+            android:label="Record YOLO" />
         
         <provider
             android:authorities="${applicationId}.provider"

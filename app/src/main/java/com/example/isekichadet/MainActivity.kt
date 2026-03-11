@@ -87,7 +87,7 @@ class MainActivity : AppCompatActivity() {
                     true
                 }
                 R.id.nav_record -> {
-                    val intent = Intent(this, RecordActivity::class.java)
+                    val intent = Intent(this, YoloRecordActivity::class.java)
                     // Hancurkan semua activity sebelumnya di back stack
                     intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)

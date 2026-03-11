@@ -60,11 +60,15 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 
     implementation ("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation ("com.google.android.material:material:1.12.0")
     implementation ("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation ("com.google.zxing:core:3.5.2")
     implementation ("androidx.exifinterface:exifinterface:1.3.7")
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.support)
+    implementation(libs.tensorflow.lite.metadata)
 
 }
