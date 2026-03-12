@@ -14,6 +14,9 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import com.google.android.material.bottomnavigation.BottomNavigationView
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import okhttp3.*
@@ -21,14 +24,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import org.tensorflow.lite.DataType
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.support.common.FileUtil
-import org.tensorflow.lite.support.common.ops.NormalizeOp
-import org.tensorflow.lite.support.image.ImageProcessor
-import org.tensorflow.lite.support.image.TensorImage
-import org.tensorflow.lite.support.image.ops.ResizeOp
-import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -52,13 +47,7 @@ class YoloRecordActivity : AppCompatActivity() {
     private var currentPhotoPath: String? = null
 
     private val client = OkHttpClient()
-
-    // YOLOv8 TFLite properties
-    private lateinit var tflite: Interpreter
-    private lateinit var labels: List<String>
-    private val modelPath = "model/chasis_model.tflite"
-    private val labelPath = "model/labels.txt"
-    private val confidenceThreshold = 0.5f
+    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
     companion object {
         private const val CHECK_PREREQUISITES_URL = "http://192.168.173.207/iseki_chadet/public/api/records/check-prerequisites"
@@ -90,8 +79,8 @@ class YoloRecordActivity : AppCompatActivity() {
                     // Show scanned image in preview
                     cameraImage.setImageURI(imageUri)
                     
-                    // Run YOLOv8 inference instead of OCR
-                    runInference(imageUri)
+                    // Run ML Kit OCR
+                    runOCR(imageUri)
                 }
             }
         }
@@ -114,26 +103,8 @@ class YoloRecordActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_yolo_record)
 
-        initTFLite()
         initUI()
         setupBottomNav()
-    }
-
-    private fun initTFLite() {
-        try {
-            val model = FileUtil.loadMappedFile(this, modelPath)
-            val options = Interpreter.Options()
-            tflite = Interpreter(model, options)
-
-            // Load labels (format: "index label")
-            val labelLines = FileUtil.loadLabels(this, labelPath)
-            labels = labelLines.map { it.split(" ").last() }
-            
-            Log.d("YOLO", "TFLite model loaded successfully: ${labels.size} labels.")
-        } catch (e: Exception) {
-            Log.e("YOLO", "Error loading TFLite model", e)
-            Toast.makeText(this, "Failed to load model", Toast.LENGTH_LONG).show()
-        }
     }
 
     private fun initUI() {
@@ -183,100 +154,38 @@ class YoloRecordActivity : AppCompatActivity() {
             }
     }
 
-    private fun runInference(imageUri: Uri) {
+    private fun runOCR(imageUri: Uri) {
         try {
-            val bitmap = BitmapFactory.decodeStream(contentResolver.openInputStream(imageUri)) ?: return
+            val image = InputImage.fromFilePath(this, imageUri)
+            recognizer.process(image)
+                .addOnSuccessListener { visionText ->
+                    val resultText = visionText.text
+                        .replace("\n", "")
+                        .replace(" ", "")
+                        .replace("<", "")
+                        .replace(">", "")
+                        .uppercase()
+                        .replace("O", "0")
+                        .trim()
+                    edtNoChasisScan.setText(resultText)
 
-            // YOLOv8 input size is typically 640x640
-            val inputSize = 640
-            val imageProcessor = ImageProcessor.Builder()
-                .add(ResizeOp(inputSize, inputSize, ResizeOp.ResizeMethod.BILINEAR))
-                .add(NormalizeOp(0f, 255f))
-                .build()
+                    submitBtn.isEnabled = resultText.isNotEmpty()
 
-            var tensorImage = TensorImage(DataType.FLOAT32)
-            tensorImage.load(bitmap)
-            tensorImage = imageProcessor.process(tensorImage)
-
-            val numClasses = labels.size
-            val outputShape = tflite.getOutputTensor(0).shape() // e.g., [1, 42, 8400]
-            val probabilityBuffer = TensorBuffer.createFixedSize(outputShape, DataType.FLOAT32)
-
-            tflite.run(tensorImage.buffer, probabilityBuffer.buffer)
-
-            val output = probabilityBuffer.floatArray
-            val detections = mutableListOf<Detection>()
-
-            val numBoxes = outputShape[2] // 8400
-
-            for (i in 0 until numBoxes) {
-                var maxClassScore = 0f
-                var classId = -1
-                
-                for (c in 0 until numClasses) {
-                    val score = output[numBoxes * (c + 4) + i]
-                    if (score > maxClassScore) {
-                        maxClassScore = score
-                        classId = c
+                    if (resultText.isEmpty()) {
+                        Toast.makeText(this, "Tidak ada teks terdeteksi", Toast.LENGTH_SHORT).show()
                     }
-                }
 
-                if (maxClassScore > confidenceThreshold) {
-                    val x_center = output[i] * bitmap.width
-                    val w = output[numBoxes * 2 + i] * bitmap.width
-                    val x1 = x_center - w / 2
-                    detections.add(Detection(x1, classId, maxClassScore))
+                    updateBadge()
                 }
-            }
-
-            // Sort left-to-right
-            val sortedDetections = detections.sortedBy { it.x }
-            
-            // Simple overlap filter (NMS-lite)
-            val filteredResults = mutableListOf<Detection>()
-            if (sortedDetections.isNotEmpty()) {
-                filteredResults.add(sortedDetections[0])
-                for (i in 1 until sortedDetections.size) {
-                    val last = filteredResults.last()
-                    // If detections are too close horizontally (e.g. within 10 pixels), keep highest confidence
-                    if (sortedDetections[i].x - last.x < 10) { 
-                        if (sortedDetections[i].confidence > last.confidence) {
-                            filteredResults[filteredResults.size - 1] = sortedDetections[i]
-                        }
-                    } else {
-                        filteredResults.add(sortedDetections[i])
-                    }
+                .addOnFailureListener { e ->
+                    Log.e("OCR", "Text recognition failed", e)
+                    Toast.makeText(this, "OCR failed: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
-            }
-
-            // Map class IDs to labels and format string
-            val rawText = filteredResults.joinToString("") { labels[it.classId] }
-            
-            val formattedText = rawText
-                .replace(" ", "")
-                .replace("<", "")
-                .replace(">", "")
-                .uppercase()
-                .replace("O", "0")
-                .trim()
-
-            runOnUiThread {
-                edtNoChasisScan.setText(formattedText)
-                submitBtn.isEnabled = formattedText.isNotEmpty()
-                if (formattedText.isEmpty()) {
-                    Toast.makeText(this, "Tidak ada karakter terdeteksi", Toast.LENGTH_SHORT).show()
-                }
-                updateBadge()
-            }
         } catch (e: Exception) {
-            Log.e("YOLO", "Error running inference", e)
-            runOnUiThread {
-                Toast.makeText(this, "Inference error: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+            Log.e("OCR", "Error creating InputImage", e)
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
-
-    data class Detection(val x: Float, val classId: Int, val confidence: Float)
 
     private fun getFilePathFromUri(uri: Uri): String? {
         return try {
