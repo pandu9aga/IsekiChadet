@@ -67,6 +67,7 @@ dependencies {
     implementation ("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation ("com.google.zxing:core:3.5.2")
     implementation ("androidx.exifinterface:exifinterface:1.3.7")
+    implementation ("org.opencv:opencv:4.9.0")
     implementation(libs.tensorflow.lite)
     implementation(libs.tensorflow.lite.support)
     implementation(libs.tensorflow.lite.metadata)

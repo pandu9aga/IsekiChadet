@@ -39,6 +39,11 @@
             android:name=".YoloRecordActivity"
             android:exported="true"
             android:label="Record YOLO" />
+
+        <activity
+            android:name=".YoloThresholdActivity"
+            android:exported="true"
+            android:label="Record Threshold" />
         
         <provider
             android:authorities="${applicationId}.provider"
