@@ -33,6 +33,7 @@ import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
+import org.opencv.photo.Photo
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -287,10 +288,11 @@ class YoloThresholdActivity : AppCompatActivity() {
     /**
      * Full adaptive threshold pipeline using OpenCV:
      * 1. Grayscale (cvtColor)
-     * 2. CLAHE (clipLimit=4.0, tileGridSize=24x24)
-     * 3. Bilateral Filter (d=9, sigmaColor=75, sigmaSpace=75)
-     * 4. Adaptive Gaussian Thresholding (blockSize=21, C=10)
-     * 5. Ensure black text on white/black background
+     * 2. CLAHE (clipLimit=2.0, tileGridSize=2x2)
+     * 3. fastNlMeansDenoising (h=10, templateWindowSize=7, searchWindowSize=21)
+     * 4. Adaptive Gaussian Thresholding (blockSize=21, C=2)
+     * 5. Morphological Opening (3x3 kernel) to remove small noise
+     * 6. Ensure black text on white/black background
      */
     private fun applyAdaptiveThreshold(source: Bitmap, forceWhiteBackground: Boolean): Bitmap {
         // Convert Bitmap to Mat
@@ -306,9 +308,9 @@ class YoloThresholdActivity : AppCompatActivity() {
         val claheResult = Mat()
         clahe.apply(gray, claheResult)
 
-        // Step 3: Bilateral Filter
+        // Step 3: fastNlMeansDenoising (replaces bilateral filter for better noise removal)
         val denoised = Mat()
-        Imgproc.bilateralFilter(claheResult, denoised, 9, 240.0, 2.0)
+        Photo.fastNlMeansDenoising(claheResult, denoised, 10f, 7, 21)
 
         // Step 4: Adaptive Gaussian Thresholding
         val thresholded = Mat()
@@ -318,26 +320,31 @@ class YoloThresholdActivity : AppCompatActivity() {
             Imgproc.THRESH_BINARY, 21, 2.0
         )
 
-        // Step 5: Ensure correct text/background contrast
-        val whitePixels = Core.countNonZero(thresholded)
-        val totalPixels = thresholded.rows() * thresholded.cols()
+        // Step 5: Morphological Opening to remove small noise dots
+        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
+        val opened = Mat()
+        Imgproc.morphologyEx(thresholded, opened, Imgproc.MORPH_OPEN, kernel)
+
+        // Step 6: Ensure correct text/background contrast
+        val whitePixels = Core.countNonZero(opened)
+        val totalPixels = opened.rows() * opened.cols()
         val whiteRatio = whitePixels.toDouble() / totalPixels.toDouble()
 
         val finalMat = if (forceWhiteBackground) {
             if (whiteRatio < 0.5) {
                 val inverted = Mat()
-                Core.bitwise_not(thresholded, inverted)
+                Core.bitwise_not(opened, inverted)
                 inverted
             } else {
-                thresholded
+                opened
             }
         } else {
             if (whiteRatio >= 0.5) {
                 val inverted = Mat()
-                Core.bitwise_not(thresholded, inverted)
+                Core.bitwise_not(opened, inverted)
                 inverted
             } else {
-                thresholded
+                opened
             }
         }
 
@@ -354,8 +361,10 @@ class YoloThresholdActivity : AppCompatActivity() {
         claheResult.release()
         denoised.release()
         thresholded.release()
+        kernel.release()
+        opened.release()
         rgbaMat.release()
-        if (finalMat !== thresholded) finalMat.release()
+        if (finalMat !== opened) finalMat.release()
 
         return resultBitmap
     }
