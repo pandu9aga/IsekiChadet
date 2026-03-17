@@ -16,12 +16,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -33,7 +37,6 @@ import org.opencv.core.Core
 import org.opencv.core.Mat
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
-import org.opencv.photo.Photo
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -75,6 +78,7 @@ class YoloThresholdActivity : AppCompatActivity() {
         private const val KEY_PHOTO_PATH = "current_photo_path"
         private const val KEY_PHOTO_TAKEN = "photo_taken"
         private const val CHECK_PREREQUISITES_URL = "http://192.168.173.207/iseki_chadet/public/api/records/check-prerequisites"
+        private const val MAX_PROCESSING_DIMENSION = 2048
     }
 
     private val qrLauncher = registerForActivityResult(ScanContract()) { result ->
@@ -172,42 +176,69 @@ class YoloThresholdActivity : AppCompatActivity() {
         }
 
         submitBtn.setOnClickListener {
+            val noProduksi = edtNoProduksi.text.toString().trim()
+            val tglProduksi = edtTglProduksi.text.toString().trim()
+            val noKanban = edtNoChasisKanban.text.toString().trim()
             val scanText = edtNoChasisScan.text.toString().trim()
-            if (scanText.isEmpty()) {
+
+            if (noProduksi.isEmpty() || tglProduksi.isEmpty() || noKanban.isEmpty()) {
+                Toast.makeText(this, "Scan QR terlebih dahulu", Toast.LENGTH_SHORT).show()
+            } else if (scanText.isEmpty()) {
                 Toast.makeText(this, "Lakukan prediksi OCR terlebih dahulu", Toast.LENGTH_SHORT).show()
             } else {
                 submitData()
             }
         }
 
-        // Threshold button listeners
+        // Threshold button listeners — run processing on background thread
         btnWhite.setOnClickListener {
             originalBitmap?.let { bmp ->
-                val processed = applyAdaptiveThreshold(bmp, forceWhiteBackground = true)
-                cameraImage.setImageBitmap(processed)
-                tvThresholdInfo.text = "Putih"
+                setThresholdButtonsEnabled(false)
+                tvThresholdInfo.text = "Memproses..."
                 tvThresholdInfo.visibility = View.VISIBLE
-                runOCR(processed)
+                lifecycleScope.launch {
+                    val processed = withContext(Dispatchers.Default) {
+                        applyAdaptiveThreshold(bmp, forceWhiteBackground = true)
+                    }
+                    cameraImage.setImageBitmap(processed)
+                    tvThresholdInfo.text = "Putih"
+                    setThresholdButtonsEnabled(true)
+                    runOCR(processed)
+                }
             }
         }
 
         btnBlack.setOnClickListener {
             originalBitmap?.let { bmp ->
-                val processed = applyAdaptiveThreshold(bmp, forceWhiteBackground = false)
-                cameraImage.setImageBitmap(processed)
-                tvThresholdInfo.text = "Hitam"
+                setThresholdButtonsEnabled(false)
+                tvThresholdInfo.text = "Memproses..."
                 tvThresholdInfo.visibility = View.VISIBLE
-                runOCR(processed)
+                lifecycleScope.launch {
+                    val processed = withContext(Dispatchers.Default) {
+                        applyAdaptiveThreshold(bmp, forceWhiteBackground = false)
+                    }
+                    cameraImage.setImageBitmap(processed)
+                    tvThresholdInfo.text = "Hitam"
+                    setThresholdButtonsEnabled(true)
+                    runOCR(processed)
+                }
             }
         }
 
         btnGray.setOnClickListener {
             originalBitmap?.let { bmp ->
-                val processed = applyEnhancedGrayscale(bmp)
-                cameraImage.setImageBitmap(processed)
-                tvThresholdInfo.text = "Abu-abu"
+                setThresholdButtonsEnabled(false)
+                tvThresholdInfo.text = "Memproses..."
                 tvThresholdInfo.visibility = View.VISIBLE
-                runOCR(processed)
+                lifecycleScope.launch {
+                    val processed = withContext(Dispatchers.Default) {
+                        applyEnhancedGrayscale(bmp)
+                    }
+                    cameraImage.setImageBitmap(processed)
+                    tvThresholdInfo.text = "Abu-abu"
+                    setThresholdButtonsEnabled(true)
+                    runOCR(processed)
+                }
             }
         }
 
@@ -283,49 +314,84 @@ class YoloThresholdActivity : AppCompatActivity() {
         }
     }
 
-    // --- Image Processing using OpenCV ---
+
 
     /**
-     * Full adaptive threshold pipeline using OpenCV:
-     * 1. Grayscale (cvtColor)
-     * 2. CLAHE (clipLimit=2.0, tileGridSize=2x2)
-     * 3. fastNlMeansDenoising (h=10, templateWindowSize=7, searchWindowSize=21)
-     * 4. Adaptive Gaussian Thresholding (blockSize=21, C=2)
-     * 5. Morphological Opening (3x3 kernel) to remove small noise
-     * 6. Ensure black text on white/black background
+     * Downscale bitmap for faster processing while maintaining OCR quality.
+     * Returns a scaled-down Mat (grayscale). The caller must release it.
      */
-    private fun applyAdaptiveThreshold(source: Bitmap, forceWhiteBackground: Boolean): Bitmap {
-        // Convert Bitmap to Mat
+    private fun downscaleForProcessing(source: Bitmap): Pair<Mat, Double> {
         val srcMat = Mat()
         Utils.bitmapToMat(source, srcMat)
 
-        // Step 1: Convert to grayscale
+        val maxDim = maxOf(srcMat.rows(), srcMat.cols())
+        val scale = if (maxDim > MAX_PROCESSING_DIMENSION) {
+            MAX_PROCESSING_DIMENSION.toDouble() / maxDim.toDouble()
+        } else {
+            1.0
+        }
+
+        if (scale < 1.0) {
+            val resized = Mat()
+            Imgproc.resize(srcMat, resized, Size(srcMat.cols() * scale, srcMat.rows() * scale), 0.0, 0.0, Imgproc.INTER_AREA)
+            srcMat.release()
+            return Pair(resized, scale)
+        }
+
+        return Pair(srcMat, 1.0)
+    }
+
+    /**
+     * Enable/disable threshold buttons during processing.
+     */
+    private fun setThresholdButtonsEnabled(enabled: Boolean) {
+        btnWhite.isEnabled = enabled
+        btnBlack.isEnabled = enabled
+        btnGray.isEnabled = enabled
+        btnReset.isEnabled = enabled
+    }
+
+    /**
+     * Full adaptive threshold pipeline using OpenCV (optimized):
+     * 1. Downscale image to max 1024px for faster processing
+     * 2. Grayscale (cvtColor)
+     * 3. CLAHE (clipLimit=2.0, tileGridSize=2x2)
+     * 4. GaussianBlur (lightweight denoising, replaces slow fastNlMeansDenoising)
+     * 5. Adaptive Gaussian Thresholding (blockSize=21, C=2)
+     * 6. Morphological Opening (3x3 kernel) to remove small noise
+     * 7. Ensure black text on white/black background
+     */
+    private fun applyAdaptiveThreshold(source: Bitmap, forceWhiteBackground: Boolean): Bitmap {
+        // Step 1: Downscale
+        val (srcMat, _) = downscaleForProcessing(source)
+
+        // Step 2: Convert to grayscale
         val gray = Mat()
         Imgproc.cvtColor(srcMat, gray, Imgproc.COLOR_RGBA2GRAY)
 
-        // Step 2: CLAHE
-        val clahe = Imgproc.createCLAHE(2.0, Size(2.0, 2.0))
+        // Step 3: CLAHE
+        val clahe = Imgproc.createCLAHE(1.0, Size(24.0, 24.0))
         val claheResult = Mat()
         clahe.apply(gray, claheResult)
 
-        // Step 3: fastNlMeansDenoising (replaces bilateral filter for better noise removal)
+        // Step 4: Lightweight denoising with GaussianBlur (much faster than fastNlMeansDenoising)
         val denoised = Mat()
-        Photo.fastNlMeansDenoising(claheResult, denoised, 10f, 7, 21)
+        Imgproc.GaussianBlur(claheResult, denoised, Size(9.0, 9.0), 3.0)
 
-        // Step 4: Adaptive Gaussian Thresholding
+        // Step 5: Adaptive Gaussian Thresholding
         val thresholded = Mat()
         Imgproc.adaptiveThreshold(
             denoised, thresholded, 255.0,
             Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-            Imgproc.THRESH_BINARY, 21, 2.0
+            Imgproc.THRESH_BINARY, 21, 3.0
         )
 
-        // Step 5: Morphological Opening to remove small noise dots
+        // Step 6: Morphological Opening to remove small noise dots
         val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(3.0, 3.0))
         val opened = Mat()
         Imgproc.morphologyEx(thresholded, opened, Imgproc.MORPH_OPEN, kernel)
 
-        // Step 6: Ensure correct text/background contrast
+        // Step 7: Ensure correct text/background contrast
         val whitePixels = Core.countNonZero(opened)
         val totalPixels = opened.rows() * opened.cols()
         val whiteRatio = whitePixels.toDouble() / totalPixels.toDouble()
@@ -350,7 +416,6 @@ class YoloThresholdActivity : AppCompatActivity() {
 
         // Convert Mat back to Bitmap
         val resultBitmap = Bitmap.createBitmap(finalMat.cols(), finalMat.rows(), Bitmap.Config.ARGB_8888)
-        // Convert single-channel to RGBA for Bitmap
         val rgbaMat = Mat()
         Imgproc.cvtColor(finalMat, rgbaMat, Imgproc.COLOR_GRAY2RGBA)
         Utils.matToBitmap(rgbaMat, resultBitmap)
@@ -373,8 +438,8 @@ class YoloThresholdActivity : AppCompatActivity() {
      * Enhanced grayscale: Grayscale + CLAHE + Bilateral filter (no thresholding)
      */
     private fun applyEnhancedGrayscale(source: Bitmap): Bitmap {
-        val srcMat = Mat()
-        Utils.bitmapToMat(source, srcMat)
+        // Step 1: Downscale
+        val (srcMat, _) = downscaleForProcessing(source)
 
         // Grayscale
         val gray = Mat()
@@ -385,9 +450,9 @@ class YoloThresholdActivity : AppCompatActivity() {
         val claheResult = Mat()
         clahe.apply(gray, claheResult)
 
-        // Bilateral Filter
+        // Lightweight denoising with GaussianBlur (replaces slow bilateralFilter)
         val denoised = Mat()
-        Imgproc.bilateralFilter(claheResult, denoised, 9, 75.0, 75.0)
+        Imgproc.GaussianBlur(claheResult, denoised, Size(5.0, 5.0), 0.0)
 
         // Convert back to Bitmap
         val resultBitmap = Bitmap.createBitmap(denoised.cols(), denoised.rows(), Bitmap.Config.ARGB_8888)

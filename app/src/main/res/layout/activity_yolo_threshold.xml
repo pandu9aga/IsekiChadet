@@ -121,7 +121,8 @@
                     android:text="Ambil Foto"
                     android:layout_marginStart="8dp"
                     android:backgroundTint="#FFC0CB"
-                    android:textColor="@android:color/white" />
+                    android:textColor="@android:color/white"
+                    android:enabled="false" />
             </LinearLayout>
 
             <!-- Validation Error Div -->
